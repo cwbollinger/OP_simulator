@@ -113,7 +113,7 @@ np.random.seed(1)
 num_nodes = 10
 # the time horizons which we try out
 try_times = range(20, 100, 20)
-try_times = [20]
+try_times = [200]
 
 for total_time in try_times:
     # this will generate a random cost matrix.
