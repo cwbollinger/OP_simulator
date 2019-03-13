@@ -7,53 +7,26 @@
 # Orienteering problem with Miller-Tucker-Zemlin formulation
 # Service window formulation added by cwb
 
+import os
+
 import cvxpy as c
 import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
 
-
-def build_graph(path_solution, node_scores, edge_costs):
-    g = nx.DiGraph()
-
-    verified_cost = 0
-    now_node = 0  # Initialize at start node
-    tour = []
-
-    # g.add_nodes_from(range(1,num_nodes+1))
-    for k in range(edge_costs.shape[0]):
-        g.add_node(k, value=node_scores[k])  # 1 based indexing
-
-    while(True):  # till we reach end node
-        tour.append(now_node)
-
-        next_node = np.argmax(path_solution[now_node, :])  # where we go from node i
-        # 1 based indexing graph
-        g.add_edge(now_node, next_node, weight=int(edge_costs[now_node, next_node]))
-        # build up the cost
-        verified_cost += edge_costs[now_node, next_node]
-        # for 1 based indexing
-        now_node = next_node
-        # we have looped again
-        if next_node == 0:
-            break
-
-    return g, tour, verified_cost
+from utils import load_cost_matrix, save_solution, build_graph, get_arrive_depart_pairs, setup_task_windows, get_starting_cost
 
 
 def compute_wait_times(plan, edge_costs, tasks, visit_times, final_cost):
-    # wait time at 0 = visit_times[state_2] - edge_cost[0, state_2]
-    # state_2 = argmax(plan[0,:])
     wait_times = np.zeros(visit_times.shape)
     curr_state = 0
-    while True:
+    for i in range(len(visit_times)):
         next_state = np.argmax(plan[curr_state, :])
         cost = edge_costs[curr_state, next_state]
         if next_state == 0:
-            departure_time = visit_times[curr_state] + tasks[curr_state, 2]
-            wait_times[curr_state] = final_cost - cost - departure_time
-            # wait_times[curr_state] = 10
-            break
+            # departure_time = visit_times[curr_state] + tasks[curr_state, 2]
+            # wait_times[curr_state] = final_cost - cost - departure_time
+            wait_times[curr_state] = tasks[curr_state, 2]
         else:
             wait_times[curr_state] = visit_times[next_state] - cost - visit_times[curr_state]
         curr_state = next_state
@@ -80,20 +53,24 @@ def display_results(g, plan, task_windows, visit_times, wait_times, total_cost):
     labels = nx.get_edge_attributes(g, 'weight')
     ax1.set_title('Graph View')
     nx.draw_networkx_edge_labels(g, pos, edge_labels=labels, width=20, edge_color='b', ax=ax1)
-    # plt.savefig('{}.png'.format(save_name))
     nodes = []
     visited_nodes = []
     window_durations = []
     window_starts = []
     window_service_starts = []
     window_service_durations = []
-    fake_val = task_windows[0][1]  # the start node always has an "open" window
     visited = np.reshape(visited, -1)
+
+    endval = total_cost
+    for window in task_windows:
+        if window[1] > endval:
+            endval = window[1]
+
     for i, task in enumerate(task_windows):
         nodes.append(i)
-        if task[1] == fake_val:
+        if np.isnan(task[1]):
             window_starts.append(0)
-            window_durations.append(total_cost)
+            window_durations.append(endval)
         else:
             window_starts.append(task[0])
             window_durations.append(task[1] - task[0])
@@ -128,32 +105,12 @@ def display_results(g, plan, task_windows, visit_times, wait_times, total_cost):
     plt.show()
 
 
-def setup_task_windows(score_vector):
-    windows = np.zeros((score_vector.shape[0], 3))
-    curr_time = np.random.uniform(20, 28)
-    for row in range(score_vector.shape[0]):
-        if row % 2 == 1:
-            task_window_size = np.random.uniform(10, 20)
-            # how much of the window is needed to complete the task?
-            task_duration = np.random.random() * task_window_size
-            windows[row, :] = (curr_time, curr_time + task_window_size, task_duration)
-            curr_time += task_window_size
-            curr_time += np.random.uniform(10, 38)
-        else:
-            task_duration = np.random.uniform(2, 10)
-            # set half the time windows to (-inf, inf), same as no window
-            windows[row, :] = (0.0, 10000.0, task_duration)
-    return windows
-
-
-def get_solution(node_rewards, time_windows, cost_matrix):
+def get_solution(node_rewards, time_windows, cost_matrix, max_cost=0):
     num_nodes = node_rewards.shape[0]
     x = c.Variable(cost_matrix.shape, boolean=True)
 
     # variables in subtour elimination constraints
-    s = c.Variable(node_rewards.shape)
-
-    ones_arr = np.ones(node_rewards.shape)  # array for ones
+    s = c.Variable(node_rewards.shape, nonneg=True)
 
     # cost = c.trace(cost_matrix @ x) + c.sum(s)  # total cost of the tour
     mask_vec = np.zeros(num_nodes)
@@ -164,11 +121,15 @@ def get_solution(node_rewards, time_windows, cost_matrix):
 
     constraints = []
 
+    constraints.append(cost <= max_cost)
+
     # we leave from the first node
     constraints.append(c.sum(x[0, :]) == 1)
     # we come back to the first node
     constraints.append(c.sum(x[:, 0]) == 1)
 
+    # max one connection outgoing and incoming
+    ones_arr = np.ones((node_rewards.shape[0], 1))  # array for ones
     # max one connection outgoing and incoming
     constraints.append(x.T @ ones_arr <= 1)
     constraints.append(x @ ones_arr <= 1)
@@ -176,23 +137,22 @@ def get_solution(node_rewards, time_windows, cost_matrix):
     for i in range(num_nodes):
         constraints.append(c.sum(x[:, i]) == c.sum(x[i, :]))
 
-    # let us add the time constraints
-    fake_window_duration = np.max(time_windows[:, 1])
-    total_time = np.max(time_windows[time_windows[:, 1] < fake_window_duration, 1])
-    fake_edge_val = np.max(cost_matrix)
-    total_time += 2 * np.max(cost_matrix[cost_matrix < fake_edge_val])
-    print('Time Limit: {}'.format(total_time))
-    constraints.append(cost <= total_time)
+    M = 5000.0
 
-    M = 10000.0
-
-    constraints.append(s[0] == 0)
+    # constraints.append(s[0] == 0)
     for i in range(num_nodes):
-        constraints.append(time_windows[i, 0] - s[i] - M * (1 - y[i]) <= 0)
-        constraints.append(time_windows[i, 0] - s[i] - M * (1 - y[i]) <= 0)
-        constraints.append(s[i] + time_windows[i, 2] - time_windows[i, 1] - M * (1 - y[i]) <= 0)
-        for j in range(1, num_nodes):
-            constraints.append(s[i] + time_windows[i, 2] + cost_matrix[i, j] - s[j] - M * (1 - x[i, j]) <= 0)
+        # constraints.append(time_windows[i, 0] - s[i] - M * (1 - y[i]) <= 0)
+        constraints.append(time_windows[i, 0] - s[i] + M * c.sum(x[:, i]) <= M)
+        # constraints.append(s[i] + time_windows[i, 2] - time_windows[i, 1] - M * (1 - y[i]) <= 0)
+        if not np.isnan(time_windows[i, 1]):
+            constraints.append(s[i] + time_windows[i, 2] - time_windows[i, 1] + M * c.sum(x[:, i]) <= M)
+        for j in range(num_nodes):
+            if i == j:
+                constraints.append(x[i, j] == 0)
+            elif j == 0:
+                pass
+            else:
+                constraints.append(s[i] + time_windows[i, 2] + cost_matrix[i, j] - s[j] + M * x[i, j] <= M)
 
     prob = c.Problem(c.Maximize(profit), constraints)
 
@@ -201,7 +161,7 @@ def get_solution(node_rewards, time_windows, cost_matrix):
     if np.any(x.value is None):  # no feasible solution found!
 
         print('Feasible solution not found, lower your time constraint!')
-        print(x.value)
+        # print(x.value)
         raise ValueError()
 
     print('----- Visited -----')
@@ -215,29 +175,28 @@ def get_solution(node_rewards, time_windows, cost_matrix):
 if __name__ == '__main__':
     np.random.seed(1)
 
-    # number of nodes in the Orienteering
-    num_nodes = 8
-    # the time horizons which we try out
-    try_times = range(20, 100, 20)
-    try_times = [20]
-
-    for total_time in try_times:
-        # this will generate a random cost matrix.
-        cost_matrix = np.random.randint(1, 15, (num_nodes, num_nodes))
-        # ensure symmetry of the matrix
-        cost_matrix = cost_matrix + cost_matrix.T
-        # make sure we don't travel from node to same node, by having high cost.
-        np.fill_diagonal(cost_matrix, 1000)
+    files = [os.path.join('.', 'Maps', f) for f in os.listdir('Maps') if f[-3:] == 'mat' and f[-12:-4] != 'solution']
+    print('Files Found: {}'.format(files))
+    for f in files:
+        cost_matrix = load_cost_matrix(f)
+        # print('----- Edge Costs -----')
+        # print(cost_matrix)
+        num_nodes = cost_matrix.shape[0]
 
         # this will generate a random score matrix.
-        score_vector = np.random.uniform(1, 5, num_nodes)
-        score_vector[0] = 0
+        score_vector = np.ones(num_nodes)
+        # score_vector[0] = 0
         task_windows = setup_task_windows(score_vector)
         print(np.around(task_windows, 2).astype('float'))
-        # since the 0th node, start node, has no value!
 
-        plan, visit_times, profit, cost, solve_time = get_solution(score_vector, task_windows, cost_matrix)
+        max_cost = get_starting_cost(cost_matrix, task_windows)
+        try:
+            plan, visit_times, profit, cost, solve_time = get_solution(score_vector, task_windows, cost_matrix, max_cost)
+        except ValueError:
+            continue
         wait_times = compute_wait_times(plan, cost_matrix, task_windows, visit_times, cost)
+        visit_order_waits, visit_times_waits = get_arrive_depart_pairs(plan, visit_times, wait_times, cost)
+        save_solution(f, visit_order_waits, visit_times_waits, solver_type='tw_st')
 
         print('----- Plan -----')
         print(np.around(plan, 2).astype('int32'))
@@ -261,7 +220,3 @@ if __name__ == '__main__':
         print('Time taken: {:.2f} seconds'.format(solve_time))
 
         display_results(g, plan, task_windows, visit_times, wait_times, cost)
-
-    # print(cost_matrix)
-    # print(x.value)
-    # print(score_vector)

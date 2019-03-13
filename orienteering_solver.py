@@ -6,40 +6,14 @@ Created on Tue Nov 6 15:25:33 2018
 """
 
 # Orienteering problem with Miller-Tucker-Zemlin formulation
+import os
 
 import cvxpy as c
 import numpy as np
-import sys
 import networkx as nx
 import matplotlib.pyplot as plt
 
-
-def build_graph(path_solution, node_scores, edge_costs):
-    g = nx.DiGraph()
-
-    verified_cost = 0
-    now_node = 0  # Initialize at start node
-    tour = []
-
-    # g.add_nodes_from(range(1,num_nodes+1))
-    for k in range(edge_costs.shape[0]):
-        g.add_node(k, value=node_scores[k])  # 1 based indexing
-
-    while(True):  # till we reach end node
-        tour.append(now_node)
-
-        next_node = np.argmax(path_solution.value[now_node, :])  # where we go from node i
-        # 1 based indexing graph
-        g.add_edge(now_node, next_node, weight=int(edge_costs[now_node, next_node]))
-        # build up the cost
-        verified_cost += edge_costs[now_node, next_node]
-        # for 1 based indexing
-        now_node = next_node
-        # we have looped again
-        if next_node == 0:
-            break
-
-    return g, tour, verified_cost
+from utils import load_cost_matrix, build_graph
 
 
 def display_graph(g, save_name='foo'):
@@ -51,12 +25,10 @@ def display_graph(g, save_name='foo'):
     nx.draw_circular(g, with_labels=True, node_color=color_map, node_size=1000, labels=nodeval)
     labels = nx.get_edge_attributes(g, 'weight')
     nx.draw_networkx_edge_labels(g, pos, edge_labels=labels, width=20, edge_color='b')
-    plt.savefig('{}.png'.format(save_name))
-    plt.title('Time horizon {}'.format(total_time))
     plt.show()
 
 
-def get_solution(score_vector, cost_matrix):
+def get_solution(score_vector, cost_matrix, time_budget=100):
     plan_idxs = c.Variable(cost_matrix.shape, boolean=True)
 
     # variables in subtour elimination constraints
@@ -84,7 +56,7 @@ def get_solution(score_vector, cost_matrix):
         constraints.append(c.sum(plan_idxs[:, i]) == c.sum(plan_idxs[i, :]))
 
     # let us add the time constraints
-    constraints.append(cost <= total_time)
+    constraints.append(cost <= time_budget)
 
     # Let us add the subtour elimination constraints (Miller-Tucker-Zemlin similar formulation)
     for i in range(1, num_nodes):
@@ -101,56 +73,55 @@ def get_solution(score_vector, cost_matrix):
 
     if np.any(plan_idxs.value is None):  # no feasible solution found!
 
-        print('Feasible solution not found, lower your time constraint!')
+        # print('Feasible solution not found, lower your time constraint!')
         raise ValueError()
 
     return plan_idxs, prob.value, cost.value, prob.solver_stats.solve_time
 
 
-np.random.seed(1)
+if __name__ == '__main__':
+    np.random.seed(1)
+    files = [f for f in os.listdir('.') if f[-3:] == 'mat' and f[-12:-4] != 'solution']
+    for f in files:
+        # this will generate a random cost matrix.
+        # cost_matrix = get_random_cost_matrix(num_nodes)
 
-# number of nodes in the Orienteering
-num_nodes = 10
-# the time horizons which we try out
-try_times = range(20, 100, 20)
-try_times = [200]
+        cost_matrix = load_cost_matrix(f)
+        num_nodes = cost_matrix.shape[0]
 
-for total_time in try_times:
-    # this will generate a random cost matrix.
-    cost_matrix = np.random.randint(1, 15, (num_nodes, num_nodes))
-    # ensure symmetry of the matrix
-    cost_matrix = cost_matrix + cost_matrix.T
-    # make sure we don't travel from node to same node, by having high cost.
-    np.fill_diagonal(cost_matrix, 1000)
+        # this will generate a random score matrix.
+        score_vector = np.random.randint(1, 5, (num_nodes))
+        # since the 0th node, start node, has no value!
+        score_vector[0] = 0
 
-    # this will generate a random score matrix.
-    score_vector = np.random.randint(1, 5, (num_nodes))
-    # since the 0th node, start node, has no value!
-    score_vector[0] = 0
+        budget = 1000
+        try:
+            plan, profit, cost, solve_time = get_solution(score_vector, cost_matrix, budget)
+        except ValueError:
+            print('Could not find solution for {}'.format(f))
+            continue
 
-    plan, profit, cost, solve_time = get_solution(score_vector, cost_matrix)
+        # print('----- Plan -----')
+        # print(np.around(plan.value, 2).astype('int32'))
+        # print('----- Edge Costs -----')
+        # print(cost_matrix)
 
-    print('----- Plan -----')
-    print(np.around(plan.value, 2).astype('int32'))
-    print('----- Edge Costs -----')
-    print(cost_matrix)
+        g, tour, verified_cost = build_graph(plan, score_vector, cost_matrix)
 
-    g, tour, verified_cost = build_graph(plan, score_vector, cost_matrix)
+        msg = 'The maximum profit tour found is \n'
+        for idx, k in enumerate(tour):
+            msg += str(k)
+            if idx < len(tour) - 1:
+                msg += ' -> '
+            else:
+                msg += ' -> 0'
+        print(msg)
 
-    msg = 'The maximum profit tour found is \n'
-    for idx, k in enumerate(tour):
-        msg += str(k)
-        if idx < len(tour) - 1:
-            msg += ' -> '
-        else:
-            msg += ' -> 0'
-    print(msg)
+        print('Profit: {:.2f}, cost: {:.2f}, verification cost: {:.2f} '.format(profit, cost, verified_cost))
+        print('Time taken: {:.2f} seconds'.format(solve_time))
 
-    print('Profit: {:.2f}, cost: {:.2f}, verification cost: {:.2f} '.format(profit, cost, verified_cost))
-    print('Time taken: {:.2f} seconds'.format(solve_time))
+        # display_graph(g)
 
-    display_graph(g)
-
-# print(cost_matrix)
-# print(x.value)
-# print(score_vector)
+    # print(cost_matrix)
+    # print(x.value)
+    # print(score_vector)
