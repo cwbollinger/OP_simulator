@@ -13,18 +13,59 @@ import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
 
-from utils import load_cost_matrix, build_graph
+from utils import load_cost_matrix, build_graph, setup_task_windows
 
 
-def display_graph(g, save_name='foo'):
+def display_results(g, tour, costs):
     color_map = ['red'] * num_nodes
     color_map[0] = 'green'
 
+    ax1 = plt.subplot(2, 1, 1)
+    ax2 = plt.subplot(2, 1, 2)
     pos = nx.circular_layout(g)
     nodeval = nx.get_node_attributes(g, 'value')
-    nx.draw_circular(g, with_labels=True, node_color=color_map, node_size=1000, labels=nodeval)
+    for k, v in nodeval.items():
+        nodeval[k] = (k, np.around(nodeval[k], 2))
+    nx.draw_circular(g, with_labels=True, node_color=color_map, node_size=1000,
+                     labels=nodeval, ax=ax1)
     labels = nx.get_edge_attributes(g, 'weight')
-    nx.draw_networkx_edge_labels(g, pos, edge_labels=labels, width=20, edge_color='b')
+    ax1.set_title('Graph View')
+    nx.draw_networkx_edge_labels(g, pos, edge_labels=labels, width=20, edge_color='b', ax=ax1)
+    nodes = []
+    windows = []
+    offsets = []
+    # fake_val = task_windows[0][1]  # the start node always has an "open" window
+    endval = 0
+    for window in task_windows:
+        if window[1] > endval:
+            endval = window[1]
+
+    for i, task in enumerate(task_windows):
+        nodes.append(i + 1)
+        if np.isnan(task[1]):
+            offsets.append(0)
+            windows.append(endval)
+        else:
+            offsets.append(task[0])
+            windows.append(task[1] - task[0])
+
+    ax2.set_title('Time Schedule')
+    ax2.barh(nodes, windows, left=offsets, color='b')
+
+    visit_order = tour
+    visit_times = [0]
+    tour_idx = 0
+    time = 0
+    for idx in range(len(tour)):
+        if idx == len(tour) - 1:
+            time += costs[idx, 0]
+        else:
+            time += costs[idx, idx + 1]
+        visit_times.append(time)
+        tour_idx += 1
+
+    visit_order.append(0)
+    ax2.plot(visit_times, visit_order, 'ro-')
     plt.show()
 
 
@@ -69,11 +110,12 @@ def get_solution(score_vector, cost_matrix, time_budget=100):
 
     prob = c.Problem(c.Maximize(profit), constraints)
 
-    prob.solve()
+    retval = prob.solve()
 
     if np.any(plan_idxs.value is None):  # no feasible solution found!
 
         # print('Feasible solution not found, lower your time constraint!')
+        print(retval)
         raise ValueError()
 
     return plan_idxs, prob.value, cost.value, prob.solver_stats.solve_time
@@ -81,7 +123,9 @@ def get_solution(score_vector, cost_matrix, time_budget=100):
 
 if __name__ == '__main__':
     np.random.seed(1)
-    files = [f for f in os.listdir('.') if f[-3:] == 'mat' and f[-12:-4] != 'solution']
+    files = [os.path.join('.', 'Maps', f) for f in os.listdir('Maps')
+             if f[-3:] == 'mat' and f[-12:-4] != 'solution']
+
     for f in files:
         # this will generate a random cost matrix.
         # cost_matrix = get_random_cost_matrix(num_nodes)
@@ -94,7 +138,9 @@ if __name__ == '__main__':
         # since the 0th node, start node, has no value!
         score_vector[0] = 0
 
-        budget = 1000
+        task_windows = setup_task_windows(score_vector)
+
+        budget = 10000
         try:
             plan, profit, cost, solve_time = get_solution(score_vector, cost_matrix, budget)
         except ValueError:
@@ -105,8 +151,10 @@ if __name__ == '__main__':
         # print(np.around(plan.value, 2).astype('int32'))
         # print('----- Edge Costs -----')
         # print(cost_matrix)
+        # print('----- Scores -----')
+        # print(score_vector)
 
-        g, tour, verified_cost = build_graph(plan, score_vector, cost_matrix)
+        g, tour, verified_cost = build_graph(plan.value, score_vector, cost_matrix)
 
         msg = 'The maximum profit tour found is \n'
         for idx, k in enumerate(tour):
@@ -120,7 +168,7 @@ if __name__ == '__main__':
         print('Profit: {:.2f}, cost: {:.2f}, verification cost: {:.2f} '.format(profit, cost, verified_cost))
         print('Time taken: {:.2f} seconds'.format(solve_time))
 
-        # display_graph(g)
+        display_results(g, tour, cost_matrix)
 
     # print(cost_matrix)
     # print(x.value)

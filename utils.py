@@ -6,7 +6,7 @@ import networkx as nx
 def get_starting_cost(cost_matrix, time_windows):
     total_time = np.max(time_windows[~np.isnan(time_windows[:, 1]), 1])
     fake_edge_val = np.max(cost_matrix)
-    total_time += 15 * np.max(cost_matrix[cost_matrix < fake_edge_val])
+    total_time += 30 * np.max(cost_matrix[cost_matrix < fake_edge_val])
     return total_time
 
 
@@ -91,11 +91,13 @@ def build_graph(path_solution, node_scores, edge_costs):
     return g, tour, verified_cost
 
 
-def setup_task_windows(score_vector):
+def setup_task_windows(score_vector, constrained_ratio=1):
+    # ratio is free:constrained
+    # only whole ratios supported for now
     windows = np.zeros((score_vector.shape[0], 3))
     curr_time = np.random.uniform(20, 38)
     for row in range(score_vector.shape[0]):
-        if row % 2 == 1:
+        if row % (constrained_ratio + 1) == 1:
             task_window_size = np.round(np.random.uniform(25, 40), 2)
             # how much of the window is needed to complete the task?
             task_duration = np.random.uniform(0.33, 0.75) * task_window_size

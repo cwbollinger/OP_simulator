@@ -59,7 +59,7 @@ def display_results(g, plan, task_windows, visit_times, wait_times, total_cost):
             endval = window[1]
 
     for i, task in enumerate(task_windows):
-        nodes.append(i)
+        nodes.append(i + 1)
         if np.isnan(task[1]):
             offsets.append(0)
             windows.append(endval)
@@ -72,6 +72,7 @@ def display_results(g, plan, task_windows, visit_times, wait_times, total_cost):
 
     visit_order_waits, visit_times_waits = get_arrive_depart_pairs(plan, visit_times, wait_times, total_cost)
 
+    visit_order_waits = [x+1 for x in visit_order_waits]
     ax2.plot(visit_times_waits, visit_order_waits, 'ro-')
     plt.show()
 
@@ -149,61 +150,84 @@ def get_solution(node_rewards, time_windows, cost_matrix, max_cost=0):
     print('----- S -----')
     print(np.around(s.value, 2))
 
-    return x.value, s.value, prob.value, cost.value, prob.solver_stats.solve_time
+    return x.value, s.value, prob.value, cost.value, prob.solver_stats
 
 
 if __name__ == '__main__':
     np.random.seed(2)
 
-    files = [os.path.join('.', 'Maps', f) for f in os.listdir('Maps') if f[-3:] == 'mat' and f[-12:-4] != 'solution']
+    files = [os.path.join('.', 'Maps', f) for f in os.listdir('Maps')
+             if f[-3:] == 'mat' and f[-12:-4] != 'solution']
     print('Files Found: {}'.format(files))
-    for f in files:
-        cost_matrix = load_cost_matrix(f)
-        # cost_matrix = cost_matrix[0:3, 0:3]
-        # print('----- Edge Costs -----')
-        # print(cost_matrix)
-        num_nodes = cost_matrix.shape[0]
+    # problem_sizes = [3, 4, 5, 6, 7, 8, 9, 10]
+    # small_map_solve_times = {p: [] for p in problem_sizes}
+    # large_map_solve_times = {p: [] for p in problem_sizes}
+    # for n in problem_sizes:
+    success_count = {}
+    for window_ratio in [1, 2, 3, 4, 5]:
+        success_count[window_ratio] = 10
+        for f in files:
+            cost_matrix = load_cost_matrix(f)
+            # cost_matrix = cost_matrix[0:n, 0:n]
+            # print('----- Edge Costs -----')
+            # print(cost_matrix)
+            num_nodes = cost_matrix.shape[0]
 
-        # this will generate a random score matrix.
-        score_vector = np.ones(num_nodes)
-        # score_vector[0] = 0
-        task_windows = setup_task_windows(score_vector)
-        # print('----- Task Windows -----')
-        # print(np.around(task_windows, 2).astype('float'))
+            # this will generate a random score matrix.
+            score_vector = np.ones(num_nodes)
+            # score_vector[0] = 0
+            task_windows = setup_task_windows(score_vector, window_ratio)
+            # print('----- Task Windows -----')
+            # print(np.around(task_windows, 2).astype('float'))
 
-        max_cost = get_starting_cost(cost_matrix, task_windows)
-        try:
-            plan, visit_times, profit, cost, solve_time = get_solution(score_vector, task_windows, cost_matrix, max_cost)
-        except ValueError:
-            print('Failed with cost {}'.format(max_cost))
-            continue
+            max_cost = get_starting_cost(cost_matrix, task_windows)
+            try:
+                plan, visit_times, profit, cost, solver_stats = get_solution(score_vector, task_windows, cost_matrix, max_cost)
+            except ValueError:
+                print('Failed with cost {}'.format(max_cost))
+                success_count[window_ratio] -= 1
+                continue
 
-        wait_times = compute_wait_times(plan, cost_matrix, visit_times)
+            wait_times = compute_wait_times(plan, cost_matrix, visit_times)
 
-        visit_order_waits, visit_times_waits = get_arrive_depart_pairs(plan, visit_times, wait_times, cost)
-        save_solution(f, visit_order_waits, visit_times_waits, solver_type='tw')
+            visit_order_waits, visit_times_waits = get_arrive_depart_pairs(plan, visit_times, wait_times, cost)
+            save_solution(f, visit_order_waits, visit_times_waits, solver_type='tw')
 
-        print('----- Plan -----')
-        print(np.around(plan, 2).astype('int32'))
-        # print('----- Edge Costs -----')
-        # print(cost_matrix)
-        print('----- Wait Times -----')
-        print(np.around(wait_times, 2))
+            print('----- Plan -----')
+            print(np.around(plan, 2).astype('int32'))
+            # print('----- Edge Costs -----')
+            # print(cost_matrix)
+            print('----- Wait Times -----')
+            print(np.around(wait_times, 2))
 
-        g, tour, verified_cost = build_graph(plan, score_vector, cost_matrix)
+            g, tour, verified_cost = build_graph(plan, score_vector, cost_matrix)
 
-        msg = 'The maximum profit tour found is \n'
-        for idx, k in enumerate(tour):
-            msg += str(k)
-            if idx < len(tour) - 1:
-                msg += ' -> '
-            else:
-                msg += ' -> 0'
-        print(msg)
+            print(f)
+            msg = 'The maximum profit tour found is \n'
+            for idx, k in enumerate(tour):
+                msg += str(k)
+                if idx < len(tour) - 1:
+                    msg += ' -> '
+                else:
+                    msg += ' -> 0'
+            print(msg)
 
-        msg = 'Profit: {:.2f}, cost: {:.2f}, verification cost: {:.2f}'
-        print(msg.format(profit, cost, verified_cost))
-        msg = 'Time taken: {:.2f} seconds'
-        print(msg.format(solve_time))
+            msg = 'Profit: {:.2f}, cost: {:.2f}, verification cost: {:.2f}'
+            print(msg.format(profit, cost, verified_cost))
+            print(solver_stats.solve_time)
+            print(solver_stats.setup_time)
+            msg = 'Time taken: {} seconds'
+            time = solver_stats.solve_time + solver_stats.setup_time
+            print(msg.format(time))
+            # display_results(g, plan, task_windows, visit_times, wait_times, cost)
+            # if f[-12:-7] == '20x20':
+            #     small_map_solve_times[n].append(time)
+            # elif f[-12:-7] == '50x50':
+            #     large_map_solve_times[n].append(time)
+        success_count[window_ratio] /= 10.0
 
-        display_results(g, plan, task_windows, visit_times, wait_times, cost)
+    print('Success probabilities across constraint ratios')
+    print(success_count)
+
+    # print(small_map_solve_times)
+    # print(large_map_solve_times)

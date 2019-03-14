@@ -101,6 +101,8 @@ def display_results(g, plan, task_windows, visit_times, wait_times, total_cost):
         visit_times_waits.append(visit_times[i])
         visit_times_waits.append(visit_times[i] + wait_times[val])
 
+    del visit_times_waits[-2]
+    del visit_order_waits[-2]
     ax2.plot(visit_times_waits, visit_order_waits, 'ro-')
     plt.show()
 
@@ -179,6 +181,7 @@ if __name__ == '__main__':
     print('Files Found: {}'.format(files))
     for f in files:
         cost_matrix = load_cost_matrix(f)
+        cost_matrix = cost_matrix[0:5, 0:5]
         # print('----- Edge Costs -----')
         # print(cost_matrix)
         num_nodes = cost_matrix.shape[0]
