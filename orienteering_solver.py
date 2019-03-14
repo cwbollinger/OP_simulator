@@ -70,51 +70,50 @@ def display_results(g, tour, costs):
 
 
 def get_solution(score_vector, cost_matrix, time_budget=100):
+
+    num_nodes = cost_matrix.shape[0]
     plan_idxs = c.Variable(cost_matrix.shape, boolean=True)
 
     # variables in subtour elimination constraints
-    u = c.Variable(score_vector.shape[0])
+    u = c.Variable(score_vector.shape[0], integer=True)
 
-    cost = c.trace(cost_matrix.T @ plan_idxs)  # total cost of the tour
-    profit = c.sum(plan_idxs @ score_vector)
-
-    ones_arr = np.ones(score_vector.shape)  # array for ones
+    reward = c.sum(plan_idxs @ score_vector)
 
     constraints = []
-
-    # now, let us make sure each node is visited only once, and we leave only once from that node.
+    constraints.append(0 <= u)
+    constraints.append(u <= num_nodes)
 
     # we leave from the first node
-    constraints.append(c.sum(plan_idxs[0, :]) == 1)
+    constraints.append(c.sum(plan_idxs[0, 1:]) == 1)
     # we come back to the first node
-    constraints.append(c.sum(plan_idxs[:, 0]) == 1)
+    constraints.append(c.sum(plan_idxs[1:, 0]) == 1)
 
+    ones_arr = np.ones(score_vector.shape)  # array for ones
     # max one connection outgoing and incoming
-    constraints.append(plan_idxs.T @ ones_arr <= 1)
     constraints.append(plan_idxs @ ones_arr <= 1)
+    constraints.append(plan_idxs.T @ ones_arr <= 1)
 
-    for i in range(num_nodes):
-        constraints.append(c.sum(plan_idxs[:, i]) == c.sum(plan_idxs[i, :]))
+    # for i in range(num_nodes):
+    #     constraints.append(c.sum(plan_idxs[:, i]) == c.sum(plan_idxs[i, :]))
 
     # let us add the time constraints
+    cost = c.sum(c.multiply(cost_matrix, plan_idxs))  # total cost of the tour
     constraints.append(cost <= time_budget)
 
     # Let us add the subtour elimination constraints (Miller-Tucker-Zemlin similar formulation)
-    for i in range(1, num_nodes):
-        for j in range(1, num_nodes):
-            if i != j:
-                constraint = u[i] - u[j] + num_nodes * (plan_idxs[i, j] - 1) + 1 <= 0
-                constraints.append(constraint)
-            else:
-                continue
 
-    prob = c.Problem(c.Maximize(profit), constraints)
+    for i in range(num_nodes):
+        for j in range(num_nodes):
+            constraint = u[i] + 1 - u[j] <= num_nodes * (1 - plan_idxs[i, j])
+            constraints.append(constraint)
+
+    prob = c.Problem(c.Maximize(reward), constraints)
 
     retval = prob.solve()
 
     if np.any(plan_idxs.value is None):  # no feasible solution found!
 
-        # print('Feasible solution not found, lower your time constraint!')
+        print('Feasible solution not found, lower your time constraint!')
         print(retval)
         raise ValueError()
 
@@ -126,7 +125,11 @@ if __name__ == '__main__':
     files = [os.path.join('.', 'Maps', f) for f in os.listdir('Maps')
              if f[-3:] == 'mat' and f[-12:-4] != 'solution']
 
+    done = False
     for f in files:
+        if done:
+            break
+        done = True
         # this will generate a random cost matrix.
         # cost_matrix = get_random_cost_matrix(num_nodes)
 
@@ -140,12 +143,12 @@ if __name__ == '__main__':
 
         task_windows = setup_task_windows(score_vector)
 
-        budget = 10000
-        try:
-            plan, profit, cost, solve_time = get_solution(score_vector, cost_matrix, budget)
-        except ValueError:
-            print('Could not find solution for {}'.format(f))
-            continue
+        budget = 10000000
+        # try:
+        plan, reward, cost, solve_time = get_solution(score_vector, cost_matrix, budget)
+        # except ValueError:
+        #     print('Could not find solution for {}'.format(f))
+        #     continue
 
         # print('----- Plan -----')
         # print(np.around(plan.value, 2).astype('int32'))
@@ -156,7 +159,7 @@ if __name__ == '__main__':
 
         g, tour, verified_cost = build_graph(plan.value, score_vector, cost_matrix)
 
-        msg = 'The maximum profit tour found is \n'
+        msg = 'The maximum reward tour found is \n'
         for idx, k in enumerate(tour):
             msg += str(k)
             if idx < len(tour) - 1:
@@ -165,7 +168,7 @@ if __name__ == '__main__':
                 msg += ' -> 0'
         print(msg)
 
-        print('Profit: {:.2f}, cost: {:.2f}, verification cost: {:.2f} '.format(profit, cost, verified_cost))
+        print('Profit: {:.2f}, cost: {:.2f}, verification cost: {:.2f}'.format(reward, cost, verified_cost))
         print('Time taken: {:.2f} seconds'.format(solve_time))
 
         display_results(g, tour, cost_matrix)
