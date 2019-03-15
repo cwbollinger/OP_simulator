@@ -14,7 +14,9 @@ import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
 
-from utils import load_cost_matrix, save_solution, build_graph, get_arrive_depart_pairs, setup_task_windows, get_starting_cost
+from utils import load_cost_matrix, save_solution, build_graph, get_arrive_depart_pairs, setup_task_windows, get_starting_cost, get_constraints
+
+from timeit import default_timer as timer
 
 
 def compute_wait_times(plan, edge_costs, tasks, visit_times, final_cost):
@@ -101,84 +103,63 @@ def display_results(g, plan, task_windows, visit_times, wait_times, total_cost):
         visit_times_waits.append(visit_times[i])
         visit_times_waits.append(visit_times[i] + wait_times[val])
 
+    del visit_times_waits[-2]
+    del visit_order_waits[-2]
     ax2.plot(visit_times_waits, visit_order_waits, 'ro-')
     plt.show()
 
 
-def get_solution(node_rewards, time_windows, cost_matrix, max_cost=0):
-    num_nodes = node_rewards.shape[0]
+def get_solution(node_rewards, cost_matrix, time_windows, max_cost=0):
     x = c.Variable(cost_matrix.shape, boolean=True)
 
     # variables in subtour elimination constraints
     s = c.Variable(node_rewards.shape, nonneg=True)
 
-    # cost = c.trace(cost_matrix @ x) + c.sum(s)  # total cost of the tour
-    mask_vec = np.zeros(num_nodes)
-    mask_vec[0] = 1.0
-    cost = c.max(s) + mask_vec @ cost_matrix @ x[:, 0]
-    profit = c.sum(x @ node_rewards)
-    y = x @ np.ones((num_nodes, 1))
+    service_times = time_windows[:, 2]
+    constraints = get_constraints(cost_matrix, node_rewards, x, s,
+                                  time_windows=time_windows[:, 0:2],
+                                  service_times=service_times)
 
-    constraints = []
-
+    cost = c.max(s) + c.sum(c.multiply(cost_matrix, x)[:, 0])
     constraints.append(cost <= max_cost)
 
-    # we leave from the first node
-    constraints.append(c.sum(x[0, :]) == 1)
-    # we come back to the first node
-    constraints.append(c.sum(x[:, 0]) == 1)
-
-    # max one connection outgoing and incoming
-    ones_arr = np.ones((node_rewards.shape[0], 1))  # array for ones
-    # max one connection outgoing and incoming
-    constraints.append(x.T @ ones_arr <= 1)
-    constraints.append(x @ ones_arr <= 1)
-
-    for i in range(num_nodes):
-        constraints.append(c.sum(x[:, i]) == c.sum(x[i, :]))
-
-    M = 5000.0
-
-    # constraints.append(s[0] == 0)
-    for i in range(num_nodes):
-        # constraints.append(time_windows[i, 0] - s[i] - M * (1 - y[i]) <= 0)
-        constraints.append(time_windows[i, 0] - s[i] + M * c.sum(x[:, i]) <= M)
-        # constraints.append(s[i] + time_windows[i, 2] - time_windows[i, 1] - M * (1 - y[i]) <= 0)
-        if not np.isnan(time_windows[i, 1]):
-            constraints.append(s[i] + time_windows[i, 2] - time_windows[i, 1] + M * c.sum(x[:, i]) <= M)
-        for j in range(num_nodes):
-            if i == j:
-                constraints.append(x[i, j] == 0)
-            elif j == 0:
-                pass
-            else:
-                constraints.append(s[i] + time_windows[i, 2] + cost_matrix[i, j] - s[j] + M * x[i, j] <= M)
-
+    profit = c.sum(x @ node_rewards)
     prob = c.Problem(c.Maximize(profit), constraints)
 
-    prob.solve()
+    print('----- Problem Info -----')
+    print('DCP: {}'.format(prob.is_dcp()))
+    print('QP: {}'.format(prob.is_qp()))
+    print('Mixed Integer: {}'.format(prob.is_mixed_integer()))
+
+    start = timer()
+    if prob.is_mixed_integer():
+        prob.solve(solver=c.GLPK_MI)
+    else:
+        prob.solve()
+    end = timer()
 
     if np.any(x.value is None):  # no feasible solution found!
+        msg = 'Solver {} failed with Status: {}'.format(
+              prob.solver_stats.solver_name, prob.status)
+        raise ValueError(msg)
 
-        print('Feasible solution not found, lower your time constraint!')
-        # print(x.value)
-        raise ValueError()
-
-    print('----- Visited -----')
-    print(np.around(y.value, 2))
-    print('----- S -----')
-    print(np.around(s.value * y.value.T, 2))
-
-    return x.value, s.value, prob.value, cost.value, prob.solver_stats.solve_time
+    return x.value, s.value, prob.value, cost.value, end - start
 
 
 if __name__ == '__main__':
     np.random.seed(1)
 
-    files = [os.path.join('.', 'Maps', f) for f in os.listdir('Maps') if f[-3:] == 'mat' and f[-12:-4] != 'solution']
+    files = [os.path.join('.', 'Maps', f) for f in os.listdir('Maps')
+             if f[-3:] == 'mat' and f[-12:-4] != 'solution']
     print('Files Found: {}'.format(files))
     for f in files:
         cost_matrix = load_cost_matrix(f)
+        # high diagonal costs cause numerical errors
+        # use constraints to prevent travel to self
+        # diagonal cost must be > 0 for this to work
+        # but should be low
+        np.fill_diagonal(cost_matrix, 1)
+        # cost_matrix = cost_matrix[0:5, 0:5]
         # print('----- Edge Costs -----')
         # print(cost_matrix)
         num_nodes = cost_matrix.shape[0]
@@ -187,13 +168,11 @@ if __name__ == '__main__':
         score_vector = np.ones(num_nodes)
         # score_vector[0] = 0
         task_windows = setup_task_windows(score_vector)
-        print(np.around(task_windows, 2).astype('float'))
+        # print(np.around(task_windows, 2).astype('float'))
 
         max_cost = get_starting_cost(cost_matrix, task_windows)
-        try:
-            plan, visit_times, profit, cost, solve_time = get_solution(score_vector, task_windows, cost_matrix, max_cost)
-        except ValueError:
-            continue
+        plan, visit_times, profit, cost, solve_time = get_solution(score_vector, cost_matrix, task_windows, max_cost)
+
         wait_times = compute_wait_times(plan, cost_matrix, task_windows, visit_times, cost)
         visit_order_waits, visit_times_waits = get_arrive_depart_pairs(plan, visit_times, wait_times, cost)
         save_solution(f, visit_order_waits, visit_times_waits, solver_type='tw_st')
@@ -216,6 +195,8 @@ if __name__ == '__main__':
                 msg += ' -> 0'
         print(msg)
 
+        print(profit)
+        print(cost)
         print('Profit: {:.2f}, cost: {:.2f}, verification cost: {:.2f} '.format(profit, cost, verified_cost))
         print('Time taken: {:.2f} seconds'.format(solve_time))
 
