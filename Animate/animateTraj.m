@@ -1,5 +1,5 @@
 clear; close all;
-load('testTraj.mat');
+load('C_goodmap_50x50_03_tw_Q.mat');
 addpath('C:\Users\DRL-Valkyrie\Google Drive\ROB 534_Sequential Decision Making\Project\Maps')
 addpath('C:\Users\DRL-Valkyrie\Google Drive\ROB 534_Sequential Decision Making\Project\Maps\pq')
 
@@ -14,7 +14,6 @@ gifIT = 1;
 
 
 %Load data
-load('testTraj.mat');
 goals = Q.goals;
 wp = Q.wp;
 mapName = Q.mapName;

@@ -1,7 +1,7 @@
 function map = makeMap(mapName)
     %Make a map (pgm)
-    columns = 100;
-    rows = 100;
+    columns = 50;
+    rows = 50;
 
     %% Initialize map
     cells = uint8(zeros(rows,columns));

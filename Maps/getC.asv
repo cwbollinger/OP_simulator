@@ -5,7 +5,7 @@ map = read_map(mapName,showMap);
 fig = figure;
 
 %% Add waypoints
-num_wp = 50;
+num_wp = 10;
 %Find list of valid waypoints
 possible_wp = [];
 for stateID = 1:map.R*map.C
@@ -15,12 +15,10 @@ for stateID = 1:map.R*map.C
     end
 end
 
-%hack to make sure wp_loc contains only unique elements (i.e. the same wp
-%isn't used twice)
+%hack to make sure wp_loc contains only unique elements
 wp_loc = [];
-while length(wp_loc) ~= num_wp
-    wp_loc = unique(datasample(possible_wp,num_wp));
-%     length(wp_loc)
+while length(wp_loc ~= num_wp)
+    wp_loc = datasample(possible_wp,num_wp);
 end
 
 %% Initialize C matrix
@@ -41,10 +39,10 @@ for outer = 1:length(wp_loc)
         %Update C matrix
         C(outer,inner) = pathLen;
         
-%         %Plot path
-%         [X, Y] = state_from_index(map,path);
-%         XY = [X',Y'];
-%         plot_path(map,XY,'Path',fig)
-%         hold on;
+        %Plot path
+        [X, Y] = state_from_index(map,path);
+        XY = [X',Y'];
+        plot_path(map,XY,'Path',fig)
+        hold on;
     end
 end

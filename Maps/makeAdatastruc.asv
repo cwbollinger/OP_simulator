@@ -7,5 +7,4 @@ for i = 1:length(strucc)
     A.waypointLoc = wp;
     A.C = C;
     save(strcat('C_',A.mapName(1:end-4),'_100_POI'),'A');
-    i/length(strucc)*100
 end
