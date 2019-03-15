@@ -1,12 +1,13 @@
 import numpy as np
 import scipy.io as sio
 import networkx as nx
+import cvxpy as c
 
 
 def get_starting_cost(cost_matrix, time_windows):
     total_time = np.max(time_windows[~np.isnan(time_windows[:, 1]), 1])
     fake_edge_val = np.max(cost_matrix)
-    total_time += 30 * np.max(cost_matrix[cost_matrix < fake_edge_val])
+    total_time += np.max(cost_matrix[cost_matrix < fake_edge_val])
     return total_time
 
 
@@ -66,6 +67,8 @@ def get_arrive_depart_pairs(plan, visit_times, wait_times, total_cost):
 def build_graph(path_solution, node_scores, edge_costs):
     g = nx.DiGraph()
 
+    num_nodes = path_solution.shape[0]
+
     verified_cost = 0
     now_node = 0  # Initialize at start node
     tour = []
@@ -74,7 +77,12 @@ def build_graph(path_solution, node_scores, edge_costs):
     for k in range(edge_costs.shape[0]):
         g.add_node(k, value=node_scores[k])  # 1 based indexing
 
+    counter = 0
     while(True):  # till we reach end node
+        if counter > num_nodes:
+            print('Something has gone horribly wrong')
+            break
+        counter += 1
         tour.append(now_node)
 
         next_node = np.argmax(path_solution[now_node, :])  # where we go from node i
@@ -108,3 +116,93 @@ def setup_task_windows(score_vector, constrained_ratio=1):
             task_duration = np.round(np.random.uniform(2, 14), 2)
             windows[row, :] = (0.0, None, task_duration)
     return windows
+
+
+def old_get_constraints(costs, rewards, x, u, time_windows=None, service_times=False):
+    num_nodes = costs.shape[0]
+    constraints = []
+
+    # we leave from the first node
+    constraints.append(c.sum(x[0, 1:]) == 1)
+    # we come back to the first node
+    constraints.append(c.sum(x[1:, 0]) == 1)
+
+    ones_arr = np.ones(rewards.shape)  # array for ones
+    # max one connection outgoing and incoming
+    constraints.append(x @ ones_arr <= 1)
+    constraints.append(x.T @ ones_arr <= 1)
+
+    for k in range(1, num_nodes):
+        constraints.append(c.sum(x[:, k]) == c.sum(x[k, :]))
+
+    # subtour elimination constraints (Miller-Tucker-Zemlin similar formulation)
+    constraints.append(0 <= u)
+    constraints.append(u <= num_nodes)
+
+    for i in range(num_nodes):
+        for j in range(num_nodes):
+            if j != 0:
+                constraints.append(u[i] + 1 - u[j] <= num_nodes * (1 - x[i, j]))
+    return constraints
+
+
+def get_constraints(costs, rewards, x, s, time_windows=None, service_times=None):
+    num_nodes = costs.shape[0]
+    constraints = []
+
+    if time_windows is not None:
+        tt = np.copy(costs).astype('float')
+        if service_times is not None:
+            for k in range(num_nodes):
+                tt[k, :] += service_times[k]
+        limit = 5000.0
+    else:
+        tt = np.ones((num_nodes, num_nodes))
+        limit = num_nodes
+
+    # we leave from the first node
+    constraints.append(c.sum(x[0, 1:]) == 1)
+    # we come back to the first node
+    constraints.append(c.sum(x[1:, 0]) == 1)
+
+    y = c.sum(x, axis=1)
+
+    ones_arr = np.ones(rewards.shape)  # array for ones
+    # max one connection outgoing and incoming
+    constraints.append(x @ ones_arr <= 1)
+    constraints.append(x.T @ ones_arr <= 1)
+
+    for k in range(1, num_nodes):
+        constraints.append(c.sum(x[:, k]) == c.sum(x[k, :]))
+
+        # only include time window constraint if it exists for this node
+        if time_windows is not None and not np.isnan(time_windows[k, 1]):
+            constraints.append(time_windows[k, 0] - s[k] <= limit * (1 - y[k]))
+            constraints.append(s[k] - time_windows[k, 1] <= limit * (1 - y[k]))
+
+    constraints.append(0 <= s)
+    constraints.append(s <= limit)
+
+    for i in range(num_nodes):
+        for j in range(num_nodes):
+            if j != 0:
+                constraints.append(s[i] + tt[i, j] - s[j] <= limit * (1 - x[i, j]))
+    return constraints
+
+
+def print_constraints_solution(costs, rewards, good_x, good_u, budget):
+        maybe_valid = get_constraints(costs, rewards, good_x, good_u)
+        cost = c.sum(c.multiply(costs, good_x))  # total cost of the tour
+        maybe_valid.append(cost <= budget)
+        print(' ----- x -----')
+        print(good_x)
+        print(' ----- u -----')
+        print(good_u)
+        print('-----')
+        for i, x in enumerate(maybe_valid):
+            print('{}: '.format(i), end='')
+            if hasattr(x, 'value'):
+                print(x.value())
+            else:
+                print(x)
+        print('-----')

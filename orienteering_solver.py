@@ -13,7 +13,9 @@ import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
 
-from utils import load_cost_matrix, build_graph, setup_task_windows
+from utils import load_cost_matrix, build_graph, setup_task_windows, get_constraints, print_constraints_solution
+
+from timeit import default_timer as timer
 
 
 def display_results(g, tour, costs):
@@ -25,7 +27,7 @@ def display_results(g, tour, costs):
     pos = nx.circular_layout(g)
     nodeval = nx.get_node_attributes(g, 'value')
     for k, v in nodeval.items():
-        nodeval[k] = (k, np.around(nodeval[k], 2))
+        nodeval[k] = (k + 1, np.around(nodeval[k], 2))
     nx.draw_circular(g, with_labels=True, node_color=color_map, node_size=1000,
                      labels=nodeval, ax=ax1)
     labels = nx.get_edge_attributes(g, 'weight')
@@ -58,106 +60,105 @@ def display_results(g, tour, costs):
     time = 0
     for idx in range(len(tour)):
         if idx == len(tour) - 1:
-            time += costs[idx, 0]
+            time += costs[tour[idx], 0]
         else:
-            time += costs[idx, idx + 1]
+            time += costs[tour[idx], tour[idx + 1]]
         visit_times.append(time)
         tour_idx += 1
 
     visit_order.append(0)
+    # print(visit_order)
+    # print(visit_times)
     ax2.plot(visit_times, visit_order, 'ro-')
     plt.show()
 
 
 def get_solution(score_vector, cost_matrix, time_budget=100):
 
-    num_nodes = cost_matrix.shape[0]
-    plan_idxs = c.Variable(cost_matrix.shape, boolean=True)
+    x = c.Variable(cost_matrix.shape, boolean=True)
 
     # variables in subtour elimination constraints
     u = c.Variable(score_vector.shape[0], integer=True)
 
-    reward = c.sum(plan_idxs @ score_vector)
+    reward = c.sum(x @ score_vector)
 
-    constraints = []
-    constraints.append(0 <= u)
-    constraints.append(u <= num_nodes)
+    constraints = get_constraints(cost_matrix, score_vector, x, u)
 
-    # we leave from the first node
-    constraints.append(c.sum(plan_idxs[0, 1:]) == 1)
-    # we come back to the first node
-    constraints.append(c.sum(plan_idxs[1:, 0]) == 1)
-
-    ones_arr = np.ones(score_vector.shape)  # array for ones
-    # max one connection outgoing and incoming
-    constraints.append(plan_idxs @ ones_arr <= 1)
-    constraints.append(plan_idxs.T @ ones_arr <= 1)
-
-    # for i in range(num_nodes):
-    #     constraints.append(c.sum(plan_idxs[:, i]) == c.sum(plan_idxs[i, :]))
-
-    # let us add the time constraints
-    cost = c.sum(c.multiply(cost_matrix, plan_idxs))  # total cost of the tour
-    constraints.append(cost <= time_budget)
-
-    # Let us add the subtour elimination constraints (Miller-Tucker-Zemlin similar formulation)
-
-    for i in range(num_nodes):
-        for j in range(num_nodes):
-            constraint = u[i] + 1 - u[j] <= num_nodes * (1 - plan_idxs[i, j])
-            constraints.append(constraint)
+    # time constraints
+    cost = c.sum(c.multiply(cost_matrix, x))  # total cost of the tour
+    constraints.append(cost <= budget)
 
     prob = c.Problem(c.Maximize(reward), constraints)
 
-    retval = prob.solve()
+    print('----- Problem Info -----')
+    print('DCP: {}'.format(prob.is_dcp()))
+    print('QP: {}'.format(prob.is_qp()))
+    print('Mixed Integer: {}'.format(prob.is_mixed_integer()))
 
-    if np.any(plan_idxs.value is None):  # no feasible solution found!
+    start = timer()
+    if prob.is_mixed_integer():
+        prob.solve(solver=c.GLPK_MI)
+    else:
+        prob.solve()
+    end = timer()
 
-        print('Feasible solution not found, lower your time constraint!')
-        print(retval)
-        raise ValueError()
+    if np.any(x.value is None):  # no feasible solution found!
+        msg = 'Solver {} failed with Status: {}'.format(
+              prob.solver_stats.solver_name, prob.status)
+        raise ValueError(msg)
 
-    return plan_idxs, prob.value, cost.value, prob.solver_stats.solve_time
+    # print('----- U -----')
+    # print(u.value)
+    print(vars(prob.solver_stats))
+    return x.value, prob.value, cost.value, end - start
+
+
+def evaluate_solution(costs, rewards, budget):
+    x = np.zeros(costs.shape)
+    x[0, 3] = 1
+    x[3, 0] = 1
+    u = np.zeros(costs.shape[0])
+    u[0] = 0
+    u[3] = 1
+    print_constraints_solution(costs, rewards, x, u, budget)
 
 
 if __name__ == '__main__':
     np.random.seed(1)
+    print(c.installed_solvers())
     files = [os.path.join('.', 'Maps', f) for f in os.listdir('Maps')
              if f[-3:] == 'mat' and f[-12:-4] != 'solution']
 
-    done = False
     for f in files:
-        if done:
-            break
-        done = True
-        # this will generate a random cost matrix.
-        # cost_matrix = get_random_cost_matrix(num_nodes)
-
         cost_matrix = load_cost_matrix(f)
+        # high diagonal costs cause numerical errors
+        # use constraints to prevent travel to self
+        # diagonal cost must be > 0 for this to work
+        # but should be low
+        np.fill_diagonal(cost_matrix, 1)
+        # cost_matrix = cost_matrix[0:8, 0:8]
         num_nodes = cost_matrix.shape[0]
 
-        # this will generate a random score matrix.
         score_vector = np.random.randint(1, 5, (num_nodes))
         # since the 0th node, start node, has no value!
         score_vector[0] = 0
 
         task_windows = setup_task_windows(score_vector)
 
-        budget = 10000000
-        # try:
+        budget = 80
+
+        # evaluate_solution(cost_matrix, score_vector, budget)
+
         plan, reward, cost, solve_time = get_solution(score_vector, cost_matrix, budget)
-        # except ValueError:
-        #     print('Could not find solution for {}'.format(f))
-        #     continue
 
-        # print('----- Plan -----')
-        # print(np.around(plan.value, 2).astype('int32'))
-        # print('----- Edge Costs -----')
-        # print(cost_matrix)
-        # print('----- Scores -----')
-        # print(score_vector)
+        print('----- Plan -----')
+        print(plan)
+        print('----- Edge Costs -----')
+        print(cost_matrix)
+        print('----- Scores -----')
+        print(score_vector)
 
-        g, tour, verified_cost = build_graph(plan.value, score_vector, cost_matrix)
+        g, tour, verified_cost = build_graph(plan, score_vector, cost_matrix)
 
         msg = 'The maximum reward tour found is \n'
         for idx, k in enumerate(tour):
@@ -172,7 +173,3 @@ if __name__ == '__main__':
         print('Time taken: {:.2f} seconds'.format(solve_time))
 
         display_results(g, tour, cost_matrix)
-
-    # print(cost_matrix)
-    # print(x.value)
-    # print(score_vector)
