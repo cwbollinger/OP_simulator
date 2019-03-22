@@ -4,10 +4,39 @@ import networkx as nx
 import cvxpy as c
 
 
+def get_plan_score(task_windows, plan, arrival_times, service_times=None):
+    curr_node = 0
+    score = 0
+    while True:
+        window = np.around(task_windows[curr_node, 0:2], 2)
+        # print(window)
+        a_time = np.around(arrival_times[curr_node], 2)
+        arrive_after = window[0] <= a_time
+
+        s_time = 0 if service_times is None else np.around(service_times[curr_node], 2)
+        if np.isnan(window[1]):
+            depart_before = True
+        else:
+            depart_before = a_time + s_time <= window[1]
+
+        if arrive_after and depart_before:
+            score += 1
+        else:
+            print('{}:'.format(curr_node, arrive_after, depart_before))
+            if not arrive_after:
+                print('False: {} <= {}'.format(window[0], a_time))
+            if not depart_before:
+                print('False {} + {} <= {}'.format(a_time, s_time, window[1]))
+        curr_node = np.argmax(plan[curr_node, :])
+        if curr_node == 0:
+            break
+    return score
+
+
 def get_starting_cost(cost_matrix, time_windows):
     total_time = np.max(time_windows[~np.isnan(time_windows[:, 1]), 1])
     fake_edge_val = np.max(cost_matrix)
-    total_time += np.max(cost_matrix[cost_matrix < fake_edge_val])
+    total_time += 15 * np.max(cost_matrix[cost_matrix < fake_edge_val])
     return total_time
 
 
@@ -29,7 +58,7 @@ def save_solution(filename, visit_order, visit_times, solver_type=''):
     for i in range(len(visit_order)):
         solution[i, 0] = visit_order[i]
         solution[i, 1] = visit_times[i]
-    print(np.around(solution, 2))
+    # print(np.around(solution, 2))
     filename = filename[:-4]
     if solver_type != '':
         filename += '_' + solver_type
@@ -111,7 +140,7 @@ def setup_task_windows(score_vector, constrained_ratio=1):
             task_duration = np.random.uniform(0.33, 0.75) * task_window_size
             windows[row, :] = (curr_time, curr_time + task_window_size, task_duration)
             curr_time += np.round(task_window_size, 2)
-            curr_time += np.round(np.random.uniform(55, 95), 2)
+            curr_time += np.round(np.random.uniform(65, 95), 2)
         else:
             task_duration = np.round(np.random.uniform(2, 14), 2)
             windows[row, :] = (0.0, None, task_duration)
@@ -152,9 +181,6 @@ def get_constraints(costs, rewards, x, s, time_windows=None, service_times=None)
 
     if time_windows is not None:
         tt = np.copy(costs).astype('float')
-        if service_times is not None:
-            for k in range(num_nodes):
-                tt[k, :] += service_times[k]
         limit = 5000.0
     else:
         tt = np.ones((num_nodes, num_nodes))
@@ -178,7 +204,8 @@ def get_constraints(costs, rewards, x, s, time_windows=None, service_times=None)
         # only include time window constraint if it exists for this node
         if time_windows is not None and not np.isnan(time_windows[k, 1]):
             constraints.append(time_windows[k, 0] - s[k] <= limit * (1 - y[k]))
-            constraints.append(s[k] - time_windows[k, 1] <= limit * (1 - y[k]))
+            st = 0 if service_times is None else service_times[k]
+            constraints.append(s[k] + st - time_windows[k, 1] <= limit * (1 - y[k]))
 
     constraints.append(0 <= s)
     constraints.append(s <= limit)

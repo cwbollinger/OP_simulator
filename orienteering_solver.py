@@ -2,18 +2,20 @@
 # -*- coding: utf-8 -*-
 """
 Created on Tue Nov 6 15:25:33 2018
+@author: cwb
 @author: sritee
 """
 
 # Orienteering problem with Miller-Tucker-Zemlin formulation
 import os
+import sys
 
 import cvxpy as c
 import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
 
-from utils import load_cost_matrix, build_graph, setup_task_windows, get_constraints, print_constraints_solution
+from utils import load_cost_matrix, build_graph, setup_task_windows, get_constraints, print_constraints_solution, get_plan_score
 
 from timeit import default_timer as timer
 
@@ -69,6 +71,7 @@ def display_results(g, tour, costs):
     visit_order.append(0)
     # print(visit_order)
     # print(visit_times)
+    visit_order = [val + 1 for val in visit_order]
     ax2.plot(visit_times, visit_order, 'ro-')
     plt.show()
 
@@ -123,53 +126,146 @@ def evaluate_solution(costs, rewards, budget):
     print_constraints_solution(costs, rewards, x, u, budget)
 
 
-if __name__ == '__main__':
+def get_arrival_times(plan, costs):
+    arrivals = np.zeros(plan.shape[0])
+    curr_node = 0
+    while True:
+        next_node = np.argmax(plan[curr_node, :])
+        if next_node == 0:
+            break
+        arrivals[next_node] = arrivals[curr_node] + costs[curr_node, next_node]
+        curr_node = next_node
+    return arrivals
+
+
+def get_time_data():
     np.random.seed(1)
     print(c.installed_solvers())
     files = [os.path.join('.', 'Maps', f) for f in os.listdir('Maps')
              if f[-3:] == 'mat' and f[-12:-4] != 'solution']
+    maps20x20 = [f for f in files if '20x20' in f]
+    maps50x50 = [f for f in files if '20x20' in f]
+    big_maps = [f for f in files if '100_POI' in f]
+    print(big_maps)
+    # print('20x20 maps:')
+    # print(maps20x20)
+    # print('50x50 maps:')
+    # print(maps50x50)
 
-    for f in files:
-        cost_matrix = load_cost_matrix(f)
-        # high diagonal costs cause numerical errors
-        # use constraints to prevent travel to self
-        # diagonal cost must be > 0 for this to work
-        # but should be low
-        np.fill_diagonal(cost_matrix, 1)
-        # cost_matrix = cost_matrix[0:8, 0:8]
-        num_nodes = cost_matrix.shape[0]
+    runtimes = {}
+    # scores = {}
+    # for n in [4, 6, 8, 10, 12, 14, 16]:
+    # for n in [4, 6, 8, 10, 12, 14]:
+    # for n in [14]:
+    for n in [4, 6, 8, 10, 12, 14]:
+        runtimes[n] = []
+        for f in big_maps:
+            # print(f)
+            cost_matrix = load_cost_matrix(f)
+            # high diagonal costs cause numerical errors
+            # use constraints to prevent travel to self
+            # diagonal cost must be > 0 for this to work
+            # but should be low
+            np.fill_diagonal(cost_matrix, 1)
+            cost_matrix = cost_matrix[0:n, 0:n]
+            num_nodes = cost_matrix.shape[0]
 
-        score_vector = np.random.randint(1, 5, (num_nodes))
-        # since the 0th node, start node, has no value!
-        score_vector[0] = 0
+            score_vector = np.ones(num_nodes)
 
-        task_windows = setup_task_windows(score_vector)
+            task_windows = setup_task_windows(score_vector)
 
-        budget = 80
+            budget = 350  # works
 
-        # evaluate_solution(cost_matrix, score_vector, budget)
+            plan, reward, cost, solve_time = get_solution(score_vector, cost_matrix, budget)
+            runtimes[n].append(solve_time)
 
-        plan, reward, cost, solve_time = get_solution(score_vector, cost_matrix, budget)
+            print('----- Plan -----')
+            print(plan)
+            print('----- Edge Costs -----')
+            print(cost_matrix)
+            print('----- Scores -----')
+            print(score_vector)
 
-        print('----- Plan -----')
-        print(plan)
-        print('----- Edge Costs -----')
-        print(cost_matrix)
-        print('----- Scores -----')
-        print(score_vector)
+            g, tour, verified_cost = build_graph(plan, score_vector, cost_matrix)
 
-        g, tour, verified_cost = build_graph(plan, score_vector, cost_matrix)
+            msg = 'The maximum reward tour found is \n'
+            for idx, k in enumerate(tour):
+                msg += str(k)
+                if idx < len(tour) - 1:
+                    msg += ' -> '
+                else:
+                    msg += ' -> 0'
+            print(msg)
+            a_times = get_arrival_times(plan, cost_matrix)
+            print(a_times)
+            print(get_plan_score(task_windows, plan, a_times))
 
-        msg = 'The maximum reward tour found is \n'
-        for idx, k in enumerate(tour):
-            msg += str(k)
-            if idx < len(tour) - 1:
-                msg += ' -> '
-            else:
-                msg += ' -> 0'
-        print(msg)
+            msg = 'Profit: {:.2f}, cost: {:.2f}, verification cost: {:.2f}'
+            print(msg.format(reward, cost, verified_cost))
+            print('Time taken: {:.2f} seconds'.format(solve_time))
 
-        print('Profit: {:.2f}, cost: {:.2f}, verification cost: {:.2f}'.format(reward, cost, verified_cost))
-        print('Time taken: {:.2f} seconds'.format(solve_time))
+            # display_results(g, tour, cost_matrix)
 
-        display_results(g, tour, cost_matrix)
+    # print(runtimes)
+    with open('results_op.txt', 'w') as f:
+        f.write(str(runtimes))
+
+
+if __name__ == '__main__':
+    np.random.seed(1)
+    files = [os.path.join('.', 'Maps', f) for f in os.listdir('Maps')
+             if f[-3:] == 'mat' and f[-12:-4] != 'solution' and 'Q' not in f]
+    maps20x20 = [f for f in files if '20x20' in f]
+
+    rewards = {}
+    times = {}
+    for budget in [600, 500, 400, 300, 200]:
+        rewards[budget] = []
+        times[budget] = []
+        for f in maps20x20:
+            # print(f)
+            cost_matrix = load_cost_matrix(f)
+            np.fill_diagonal(cost_matrix, 1)
+            num_nodes = cost_matrix.shape[0]
+
+            # score_vector = np.random.randint(1, 3, (num_nodes,))
+            score_vector = np.ones(num_nodes)
+
+            task_windows = setup_task_windows(score_vector)
+
+            plan, reward, cost, solve_time = get_solution(score_vector, cost_matrix, budget)
+
+            # print('----- Plan -----')
+            # print(plan)
+            # print('----- Edge Costs -----')
+            # print(cost_matrix)
+            # print('----- Scores -----')
+            # print(score_vector)
+
+            g, tour, verified_cost = build_graph(plan, score_vector, cost_matrix)
+
+            msg = 'The maximum reward tour found is \n'
+            for idx, k in enumerate(tour):
+                msg += str(k)
+                if idx < len(tour) - 1:
+                    msg += ' -> '
+                else:
+                    msg += ' -> 0'
+            print(msg)
+            a_times = get_arrival_times(plan, cost_matrix)
+            print(a_times)
+            score = get_plan_score(task_windows, plan, a_times, task_windows[:, 2])
+            rewards[budget].append(score)
+            times[budget].append(solve_time)
+            print(score)
+
+            msg = 'Profit: {:.2f}, cost: {:.2f}, verification cost: {:.2f}'
+            print(msg.format(reward, cost, verified_cost))
+            print('Time taken: {:.2f} seconds'.format(solve_time))
+
+            # display_results(g, tour, cost_matrix)
+
+    with open('rewards_op.txt', 'w') as f:
+        f.write(str(rewards))
+    with open('times_op.txt', 'w') as f:
+        f.write(str(times))

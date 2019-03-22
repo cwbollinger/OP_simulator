@@ -14,7 +14,7 @@ import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
 
-from utils import load_cost_matrix, save_solution, build_graph, get_arrive_depart_pairs, setup_task_windows, get_starting_cost, get_constraints
+from utils import load_cost_matrix, save_solution, build_graph, get_arrive_depart_pairs, setup_task_windows, get_starting_cost, get_constraints, get_plan_score
 
 from timeit import default_timer as timer
 
@@ -146,58 +146,135 @@ def get_solution(node_rewards, cost_matrix, time_windows, max_cost=0):
     return x.value, s.value, prob.value, cost.value, end - start
 
 
-if __name__ == '__main__':
+def get_time_data():
     np.random.seed(1)
 
     files = [os.path.join('.', 'Maps', f) for f in os.listdir('Maps')
              if f[-3:] == 'mat' and f[-12:-4] != 'solution']
-    print('Files Found: {}'.format(files))
-    for f in files:
-        cost_matrix = load_cost_matrix(f)
-        # high diagonal costs cause numerical errors
-        # use constraints to prevent travel to self
-        # diagonal cost must be > 0 for this to work
-        # but should be low
-        np.fill_diagonal(cost_matrix, 1)
-        # cost_matrix = cost_matrix[0:5, 0:5]
-        # print('----- Edge Costs -----')
-        # print(cost_matrix)
-        num_nodes = cost_matrix.shape[0]
+    maps20x20 = [f for f in files if '20x20' in f]
+    maps50x50 = [f for f in files if '20x20' in f]
+    big_maps = [f for f in files if '100_POI' in f]
+    runtimes = {}
+    for n in [4, 6, 8, 10, 12, 14]:
+        runtimes[n] = []
+        for f in big_maps[:10]:
+            print(f)
+            cost_matrix = load_cost_matrix(f)
+            # high diagonal costs cause numerical errors
+            # use constraints to prevent travel to self
+            # diagonal cost must be > 0 for this to work
+            # but should be low
+            np.fill_diagonal(cost_matrix, 1)
+            cost_matrix = cost_matrix[0:n, 0:n]
+            # print('----- Edge Costs -----')
+            # print(cost_matrix)
+            num_nodes = cost_matrix.shape[0]
 
-        # this will generate a random score matrix.
-        score_vector = np.ones(num_nodes)
-        # score_vector[0] = 0
-        task_windows = setup_task_windows(score_vector)
-        # print(np.around(task_windows, 2).astype('float'))
+            # this will generate a random score matrix.
+            score_vector = np.ones(num_nodes)
+            # score_vector[0] = 0
+            task_windows = setup_task_windows(score_vector)
+            # print(np.around(task_windows, 2).astype('float'))
 
-        max_cost = get_starting_cost(cost_matrix, task_windows)
-        plan, visit_times, profit, cost, solve_time = get_solution(score_vector, cost_matrix, task_windows, max_cost)
+            max_cost = get_starting_cost(cost_matrix, task_windows)
+            plan, visit_times, profit, cost, solve_time = get_solution(score_vector, cost_matrix, task_windows, max_cost)
+            runtimes[n].append(solve_time)
 
-        wait_times = compute_wait_times(plan, cost_matrix, task_windows, visit_times, cost)
-        visit_order_waits, visit_times_waits = get_arrive_depart_pairs(plan, visit_times, wait_times, cost)
-        save_solution(f, visit_order_waits, visit_times_waits, solver_type='tw_st')
+            wait_times = compute_wait_times(plan, cost_matrix, task_windows, visit_times, cost)
+            visit_order_waits, visit_times_waits = get_arrive_depart_pairs(plan, visit_times, wait_times, cost)
+            save_solution(f, visit_order_waits, visit_times_waits, solver_type='tw_st')
 
-        print('----- Plan -----')
-        print(np.around(plan, 2).astype('int32'))
-        print('----- Edge Costs -----')
-        print(cost_matrix)
-        print('----- Wait Times -----')
-        print(np.around(wait_times, 2))
+            # print('----- Plan -----')
+            # print(np.around(plan, 2).astype('int32'))
+            # print('----- Edge Costs -----')
+            # print(cost_matrix)
+            # print('----- Wait Times -----')
+            # print(np.around(wait_times, 2))
 
-        g, tour, verified_cost = build_graph(plan, score_vector, cost_matrix)
+            g, tour, verified_cost = build_graph(plan, score_vector, cost_matrix)
 
-        msg = 'The maximum profit tour found is \n'
-        for idx, k in enumerate(tour):
-            msg += str(k)
-            if idx < len(tour) - 1:
-                msg += ' -> '
-            else:
-                msg += ' -> 0'
-        print(msg)
+            msg = 'The maximum profit tour found is \n'
+            for idx, k in enumerate(tour):
+                msg += str(k)
+                if idx < len(tour) - 1:
+                    msg += ' -> '
+                else:
+                    msg += ' -> 0'
+            print(msg)
 
-        print(profit)
-        print(cost)
-        print('Profit: {:.2f}, cost: {:.2f}, verification cost: {:.2f} '.format(profit, cost, verified_cost))
-        print('Time taken: {:.2f} seconds'.format(solve_time))
+            print(profit)
+            print(cost)
+            print('Profit: {:.2f}, cost: {:.2f}, verification cost: {:.2f} '.format(profit, cost, verified_cost))
+            print('Time taken: {:.2f} seconds'.format(solve_time))
 
-        display_results(g, plan, task_windows, visit_times, wait_times, cost)
+            # display_results(g, plan, task_windows, visit_times, wait_times, cost)
+
+    with open('results_twst.txt', 'w') as f:
+        f.write(str(runtimes))
+
+
+if __name__ == '__main__':
+    np.random.seed(1)
+
+    np.random.seed(1)
+    files = [os.path.join('.', 'Maps', f) for f in os.listdir('Maps')
+             if f[-3:] == 'mat' and f[-12:-4] != 'solution' and 'Q' not in f]
+    maps20x20 = [f for f in files if '20x20' in f]
+
+    rewards = {}
+    times = {}
+    for budget in [600, 500, 400, 300, 200]:
+        print('Budget: {}'.format(budget))
+        rewards[budget] = []
+        times[budget] = []
+        for f in maps20x20:
+            print(f)
+            cost_matrix = load_cost_matrix(f)
+            np.fill_diagonal(cost_matrix, 1)
+            # cost_matrix = cost_matrix[0:n, 0:n]
+            # print('----- Edge Costs -----')
+            # print(cost_matrix)
+            num_nodes = cost_matrix.shape[0]
+
+            # this will generate a random score matrix.
+            score_vector = np.ones(num_nodes)
+            task_windows = setup_task_windows(score_vector)
+
+            # max_cost = get_starting_cost(cost_matrix, task_windows)
+            try:
+                plan, visit_times, profit, cost, solve_time = get_solution(score_vector, cost_matrix, task_windows, budget)
+            except ValueError:
+                print('No solution for {}'.format(f))
+                continue
+
+            wait_times = compute_wait_times(plan, cost_matrix, task_windows, visit_times, cost)
+            visit_order_waits, visit_times_waits = get_arrive_depart_pairs(plan, visit_times, wait_times, cost)
+            save_solution(f, visit_order_waits, visit_times_waits, solver_type='tw_st')
+
+            g, tour, verified_cost = build_graph(plan, score_vector, cost_matrix)
+
+            msg = 'The maximum profit tour found is \n'
+            for idx, k in enumerate(tour):
+                msg += str(k)
+                if idx < len(tour) - 1:
+                    msg += ' -> '
+                else:
+                    msg += ' -> 0'
+            print(msg)
+
+            score = get_plan_score(task_windows, plan, visit_times, task_windows[:, 2])
+            rewards[budget].append(score)
+            times[budget].append(solve_time)
+            print('True Score: {}'.format(score))
+
+            print(profit)
+            print(cost)
+            print('Profit: {:.2f}, cost: {:.2f}, verification cost: {:.2f} '.format(profit, cost, verified_cost))
+            print('Time taken: {:.2f} seconds'.format(solve_time))
+
+            # display_results(g, plan, task_windows, visit_times, wait_times, cost)
+
+    with open('rewards_twst.txt', 'w') as f:
+        f.write(str(rewards))
+    with open('times_twst.txt', 'w') as f:
+        f.write(str(times))
