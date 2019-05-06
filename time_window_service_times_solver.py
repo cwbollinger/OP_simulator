@@ -213,9 +213,7 @@ def get_time_data():
         f.write(str(runtimes))
 
 
-if __name__ == '__main__':
-    np.random.seed(1)
-
+def get_budget_performance():
     np.random.seed(1)
     files = [os.path.join('.', 'Maps', f) for f in os.listdir('Maps')
              if f[-3:] == 'mat' and f[-12:-4] != 'solution' and 'Q' not in f]
@@ -278,3 +276,53 @@ if __name__ == '__main__':
         f.write(str(rewards))
     with open('times_twst.txt', 'w') as f:
         f.write(str(times))
+
+
+def load_problem():
+    costs = np.load('./distances.npy')
+    tws = np.load('./windows.npy')
+    return costs, tws
+
+
+def save_problem(visit_order, visit_times):
+    solution = np.zeros((len(visit_order), 2))
+    for i in range(len(visit_order)):
+        solution[i, 0] = visit_order[i]
+        solution[i, 1] = visit_times[i]
+    np.save()
+    # print(np.around(solution, 2))
+
+
+if __name__ == '__main__':
+    # load cost_matrix
+    cost_matrix, task_windows = load_problem()
+    num_nodes = cost_matrix.shape[0]
+
+    # this will generate a random score matrix.
+    score_vector = np.ones(num_nodes)
+    # task_windows = setup_task_windows(score_vector)
+
+    # max_cost = get_starting_cost(cost_matrix, task_windows)
+    # fake budget for now... (end of last service window + 1 Hour)
+    budget = np.max(task_windows[:, 1]) + 3600.0
+    try:
+        plan, visit_times, profit, cost, solve_time = get_solution(score_vector, cost_matrix, task_windows, budget)
+    except ValueError:
+        print('No solution found!')
+
+    wait_times = compute_wait_times(plan, cost_matrix, task_windows, visit_times, cost)
+    visit_order_waits, visit_times_waits = get_arrive_depart_pairs(plan, visit_times, wait_times, cost)
+    save_problem(visit_order_waits, visit_times_waits)
+
+    # g, tour, verified_cost = build_graph(plan, score_vector, cost_matrix)
+
+    # msg = 'The maximum profit tour found is \n'
+    # for idx, k in enumerate(tour):
+    #     msg += str(k)
+    #     if idx < len(tour) - 1:
+    #         msg += ' -> '
+    #     else:
+    #         msg += ' -> 0'
+    # print(msg)
+
+    # score = get_plan_score(task_windows, plan, visit_times, task_windows[:, 2])
