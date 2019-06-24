@@ -8,11 +8,11 @@
 # Service window formulation added by cwb
 
 import os
+import sys
 
 import cvxpy as c
 import numpy as np
 import networkx as nx
-import matplotlib.pyplot as plt
 
 from utils import load_cost_matrix, save_solution, build_graph, get_arrive_depart_pairs, setup_task_windows, get_starting_cost, get_constraints, get_plan_score
 
@@ -38,6 +38,7 @@ def compute_wait_times(plan, edge_costs, tasks, visit_times, final_cost):
 
 
 def display_results(g, plan, task_windows, visit_times, wait_times, total_cost):
+    import matplotlib.pyplot as plt
     num_nodes = len(visit_times)
     color_map = ['red'] * num_nodes
     color_map[0] = 'green'
@@ -279,8 +280,8 @@ def get_budget_performance():
 
 
 def load_problem():
-    costs = np.load('./distances.npy')
-    tws = np.load('./windows.npy')
+    costs = np.load(os.path.abspath('./distances.npy'))
+    tws = np.load(os.path.abspath('./windows.npy'))
     return costs, tws
 
 
@@ -289,14 +290,22 @@ def save_problem(visit_order, visit_times):
     for i in range(len(visit_order)):
         solution[i, 0] = visit_order[i]
         solution[i, 1] = visit_times[i]
-    np.save()
-    # print(np.around(solution, 2))
+
+    np.save(os.path.abspath('./solution.npy'), solution)
 
 
 if __name__ == '__main__':
+    # Make sure our cwd is the directory where this file is located
+    print(sys.argv[0])
+    script_dir = os.path.dirname(sys.argv[0])
+    os.chdir(os.path.abspath(script_dir))
     # load cost_matrix
     cost_matrix, task_windows = load_problem()
     num_nodes = cost_matrix.shape[0]
+
+    if num_nodes == 0:
+        print('What, no nodes???')
+        sys.exit(-1)
 
     # this will generate a random score matrix.
     score_vector = np.ones(num_nodes)
