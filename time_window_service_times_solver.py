@@ -280,8 +280,10 @@ def get_budget_performance():
 
 
 def load_problem():
-    costs = np.load(os.path.abspath('./distances.npy'))
-    tws = np.load(os.path.abspath('./windows.npy'))
+    # costs = np.load(os.path.abspath('./distances.npy'))
+    # tws = np.load(os.path.abspath('./windows.npy'))
+    costs = np.load(sys.argv[1])
+    tws = np.load(sys.argv[2])
     return costs, tws
 
 
@@ -301,6 +303,18 @@ if __name__ == '__main__':
     os.chdir(os.path.abspath(script_dir))
     # load cost_matrix
     cost_matrix, task_windows = load_problem()
+
+    # convert distances (m) to time (s) assuming robot speed of 0.5 m
+    for i, row in enumerate(cost_matrix):
+        for j, val in enumerate(row):
+            cost_matrix[i, j] = round(val * 2.0, 2)
+
+    start_time = task_windows[0][0]
+    # set windows of time relative to plan start for feasibility
+    for i in range(len(task_windows)):
+        task_windows[i][0] -= start_time
+        task_windows[i][1] -= start_time
+
     num_nodes = cost_matrix.shape[0]
 
     if num_nodes == 0:
@@ -312,15 +326,29 @@ if __name__ == '__main__':
     # task_windows = setup_task_windows(score_vector)
 
     # max_cost = get_starting_cost(cost_matrix, task_windows)
-    # fake budget for now... (end of last service window + 1 Hour)
-    budget = np.max(task_windows[:, 1]) + 3600.0
+    # fake budget for now... (end of last service window + 1 Minute)
+    budget = np.max(task_windows[:, 1]) + 60.0
+
+    print(cost_matrix)
+    print('----------')
+    start = task_windows[0][0]
+    for t in task_windows:
+        # print('start:{} end:{} duration:{}'.format(t[0]-start, t[1]-start, t[2]))
+        print('start:{} end:{} duration:{}'.format(t[0], t[1], t[2]))
+
     try:
         plan, visit_times, profit, cost, solve_time = get_solution(score_vector, cost_matrix, task_windows, budget)
     except ValueError:
         print('No solution found!')
+        sys.exit(-1)
+
 
     wait_times = compute_wait_times(plan, cost_matrix, task_windows, visit_times, cost)
     visit_order_waits, visit_times_waits = get_arrive_depart_pairs(plan, visit_times, wait_times, cost)
+
+    # add start time back to plan
+    for i in range(len(visit_times_waits)):
+        visit_times_waits +=  start_time
     save_problem(visit_order_waits, visit_times_waits)
 
     # g, tour, verified_cost = build_graph(plan, score_vector, cost_matrix)
