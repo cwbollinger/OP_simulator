@@ -5,7 +5,7 @@
 """
 
 # Orienteering problem with Miller-Tucker-Zemlin formulation
-# Service window formulation added by cwb
+# Service window formulation added by Chris Bollinger
 
 import os
 import sys
@@ -14,9 +14,9 @@ import cvxpy as c
 import numpy as np
 import networkx as nx
 
-from utils import load_cost_matrix, save_solution, build_graph, get_arrive_depart_pairs, setup_task_windows, get_starting_cost, get_constraints, get_plan_score
-
+from utils import load_cost_matrix, save_solution, build_graph, get_arrive_depart_pairs, setup_task_windows, get_starting_cost, get_constraints, get_plan_score, print_constraints_solution
 from timeit import default_timer as timer
+import datetime
 
 
 def compute_wait_times(plan, edge_costs, tasks, visit_times, final_cost):
@@ -287,11 +287,11 @@ def load_problem():
     return costs, tws
 
 
-def save_problem(visit_order, visit_times):
-    solution = np.zeros((len(visit_order), 2))
-    for i in range(len(visit_order)):
-        solution[i, 0] = visit_order[i]
-        solution[i, 1] = visit_times[i]
+def save_problem(visit_time, leave_time):
+    solution = np.zeros((len(visit_time), 2))
+    for i in range(len(visit_time)):
+        solution[i, 0] = visit_time[i]
+        solution[i, 1] = leave_time[i]
 
     np.save(os.path.abspath('./solution.npy'), solution)
 
@@ -329,27 +329,40 @@ if __name__ == '__main__':
     # fake budget for now... (end of last service window + 1 Minute)
     budget = np.max(task_windows[:, 1]) + 60.0
 
+    def to_datestring(t_secs):
+        return datetime.datetime.fromtimestamp(t_secs).strftime('%Y-%m-%d %H:%M:%S')
+
     print(cost_matrix)
+    print('Task Windows:')
     print('----------')
-    start = task_windows[0][0]
+    print('Start Time: {}'.format(to_datestring(start_time)))
     for t in task_windows:
-        # print('start:{} end:{} duration:{}'.format(t[0]-start, t[1]-start, t[2]))
-        print('start:{} end:{} duration:{}'.format(t[0], t[1], t[2]))
+        print('start: {} end: {} duration: {}'.format(t[0], t[1], t[2]))
 
     try:
-        plan, visit_times, profit, cost, solve_time = get_solution(score_vector, cost_matrix, task_windows, budget)
+        output = get_solution(score_vector, cost_matrix, task_windows, budget)
+        plan, visit_times, profit, cost, solve_time = output
     except ValueError:
         print('No solution found!')
         sys.exit(-1)
 
+    # for constraint in get_constraints:
+    #     print(constraint)
+    # print_constraints_solution(cost_matrix, score_vector, plan, visit_times, budget)
 
     wait_times = compute_wait_times(plan, cost_matrix, task_windows, visit_times, cost)
-    visit_order_waits, visit_times_waits = get_arrive_depart_pairs(plan, visit_times, wait_times, cost)
+    # visit_order_waits, visit_times_waits = get_arrive_depart_pairs(plan, visit_times, wait_times, cost)
+
+    start_times = [t+start_time for t in visit_times]
+    end_times = [t+w for t in start_times for w in wait_times]
+    for i in range(len(start_times)):
+        print('{} to {}'.format(to_datestring(start_times[i]), to_datestring(end_times[i])))
+    #print(np.round(end_times,2))
 
     # add start time back to plan
-    for i in range(len(visit_times_waits)):
-        visit_times_waits +=  start_time
-    save_problem(visit_order_waits, visit_times_waits)
+    # for i in range(len(visit_times_waits)):
+    #     visit_times_waits +=  start_time
+    save_problem(start_times, end_times)
 
     # g, tour, verified_cost = build_graph(plan, score_vector, cost_matrix)
 
